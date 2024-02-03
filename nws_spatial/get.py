@@ -1,12 +1,20 @@
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
+import asyncio
 import datetime as dt
 import httpx
 import geopandas as gpd
 import pandas as pd
 import json
 from pathlib import Path
+from aiolimiter import AsyncLimiter
 
-from . import schemas
 
+try:
+    from . import schemas
+except ImportError:
+    import schemas
 
 def get_zones(
     id: schemas.Id | None = None,
@@ -30,24 +38,37 @@ def get_zones(
     }
 
     params = {k: v for k, v in params.items() if v is not None}
-    print(params)
 
     r = httpx.get("https://api.weather.gov/zones", params=params)
 
     response_json = r.json()
+
+    async def get_zone_data(
+        client: httpx.AsyncClient, 
+        # limiter: AsyncLimiter, 
+        zone_id: str,
+    ):
+        resp = await client.get(zone_id)
+        return gpd.read_file(resp.text, driver="GeoJSON")
+
+    async def process_features(response_json):
+
+        async with httpx.AsyncClient(limits=httpx.Limits(max_connections=5)) as client:
+
+            async with asyncio.TaskGroup() as tg:
+                tasks = [tg.create_task(get_zone_data(client, feature["id"])) for feature in response_json["features"]]
+            
+            completed_tasks = [task.result() for task in tasks]
+        
+        await asyncio.sleep(1)
+        return gpd.GeoDataFrame(pd.concat(completed_tasks, ignore_index=True))
+
     # The include_geometry query parameter doesn't work...
     # We have to manually query each zone to get their geometry.
     if not response_json["features"][0]["geometry"] and include_geometry:
-        gpd_out = []
-
-        for feature in response_json["features"]:
-            zone = httpx.get(feature["id"])
-            tmp = gpd.read_file(zone.text, driver="GeoJSON")
-            gpd_out.append(tmp)
-        gdf = gpd.GeoDataFrame(pd.concat(gpd_out, ignore_index=True))
+        gdf = asyncio.run(process_features(response_json))
     else:
         gdf = gpd.read_file(r.text, driver="GeoJSON")
-
     return gdf
 
 

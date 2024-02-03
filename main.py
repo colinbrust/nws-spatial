@@ -3,6 +3,7 @@ from enum import Enum
 from pathlib import Path
 import geopandas as gpd
 import pandas as pd
+from typing import Optional
 
 from nws_spatial import get
 from nws_spatial.utils import render_templates
@@ -45,7 +46,7 @@ if __name__ == "__main__":
         "--zone-id",
         type=str,
         help="Two-letter state code",
-        default="MT",
+        default=None,
     )
     parser.add_argument(
         "--out-dir",
@@ -80,20 +81,24 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    print("Getting Zones...")
     if Options.zones in args.funcs:
+        print("Getting Zones...")
         zones = get.get_zones(area=args.zone_id)
-        get.save_zones(zones, args.out_dir / f"{args.zone_id}-zones.fgb".lower())
+        if args.zone_id is None:
+            out_name = "all-zones.fgb"
+        else:
+            out_name = f"{args.zone_id}-zones.fgb".lower()
+        get.save_zones(zones, args.out_dir / out_name)
 
         counties = get.get_zones(area=args.zone_id, type="county")
-        get.save_zones(counties, args.out_dir / f"{args.zone_id}-counties.fgb".lower())
+        get.save_zones(counties, args.out_dir / out_name.replace("zones", "counties"))
 
     else:
         zones = gpd.read_file(args.zones)
         counties = gpd.read_file(args.counties)
 
-    print("Getting Latest Alerts...")
     if Options.alerts in args.funcs:
+        print("Getting Latest Alerts...")
         zone_alerts = get.get_active_alerts_from_zones(zones)
         county_alerts = get.get_active_alerts_from_zones(counties)
 
@@ -108,8 +113,8 @@ if __name__ == "__main__":
     else:
         alerts = pd.read_csv(args.alert_file)
 
-    print("Making Template Files")
     if Options.templates in args.funcs:
+        print("Making Template Files")
         template_dir = args.out_dir / "alert_pages"
         for f in template_dir.iterdir():
             if f.is_file():
